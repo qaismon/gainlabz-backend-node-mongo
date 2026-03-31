@@ -1,4 +1,4 @@
-﻿# Gainlabz backend-node-
+﻿# Gainlabz backend-node-mongo
 
  🚀 Gainlabz Backend API
 
