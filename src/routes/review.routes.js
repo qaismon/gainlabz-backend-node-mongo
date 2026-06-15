@@ -1,8 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const cloudinary = require("../config/cloudinary");
 const {
   createReview,
   getProductReviews,
@@ -13,14 +13,13 @@ const {
 const auth = require("../middleware/auth.middleware");
 const admin = require("../middleware/admin.middleware");
 
-const uploadDir = path.resolve(process.cwd(), "uploads", "reviews");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(null, unique + path.extname(file.originalname));
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "reviews",
+    allowed_formats: ["jpg", "jpeg", "png", "webp"],
+    max_file_size: 5 * 1024 * 1024,
+    transformation: [{ width: 1200, height: 1200, crop: "limit", quality: "auto" }]
   }
 });
 
@@ -29,7 +28,7 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|webp/;
-    const ext = allowed.test(path.extname(file.originalname).toLowerCase());
+    const ext = allowed.test(file.originalname.split(".").pop().toLowerCase());
     const mime = allowed.test(file.mimetype);
     cb(null, ext && mime);
   }

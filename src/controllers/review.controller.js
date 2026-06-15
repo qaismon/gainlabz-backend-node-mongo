@@ -1,7 +1,11 @@
 const Review = require("../models/Review.model");
 const Order = require("../models/Order.model");
-const fs = require("fs");
-const path = require("path");
+const cloudinary = require("../config/cloudinary");
+
+function getPublicIdFromUrl(url) {
+  const match = url.match(/\/upload\/(?:v\d+\/)?(.+?)\.\w+$/);
+  return match ? match[1] : null;
+}
 
 exports.createReview = async (req, res) => {
   try {
@@ -20,7 +24,7 @@ exports.createReview = async (req, res) => {
 
     let images = [];
     if (req.files && req.files.length > 0) {
-      images = req.files.map(f => `uploads/reviews/${f.filename}`);
+      images = req.files.map(f => f.path);
     }
 
     const review = new Review({
@@ -124,10 +128,12 @@ exports.deleteReview = async (req, res) => {
     }
 
     if (review.images && review.images.length > 0) {
-      review.images.forEach(imgPath => {
-        const fullPath = path.resolve(process.cwd(), imgPath);
-        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
-      });
+      for (const imgUrl of review.images) {
+        const publicId = getPublicIdFromUrl(imgUrl);
+        if (publicId) {
+          await cloudinary.uploader.destroy(publicId);
+        }
+      }
     }
 
     await Review.findByIdAndDelete(req.params.id);
