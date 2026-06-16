@@ -17,7 +17,7 @@ const storage = new CloudinaryStorage({
   cloudinary,
   params: {
     folder: "reviews",
-    allowed_formats: ["jpg", "jpeg", "png", "webp"],
+    allowed_formats: ["jpg", "jpeg", "png", "webp", "jfif"],
     max_file_size: 5 * 1024 * 1024,
     transformation: [{ width: 1200, height: 1200, crop: "limit", quality: "auto" }]
   }
@@ -27,7 +27,7 @@ const upload = multer({
   storage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|webp/;
+    const allowed = /jpeg|jpg|png|webp|jfif/;
     const ext = allowed.test(file.originalname.split(".").pop().toLowerCase());
     const mime = allowed.test(file.mimetype);
     cb(null, ext && mime);
