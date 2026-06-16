@@ -49,11 +49,14 @@ const updateInventory = async (items, multiplier) => {
 const incrementCoupon = async (code) => {
   if (!code) return;
   try {
-    await Coupon.findOneAndUpdate(
+    const result = await Coupon.findOneAndUpdate(
       { code: code.toUpperCase(), isActive: true },
       { $inc: { usedCount: 1 } }
     );
-  } catch {}
+    console.log(`[COUPON] incrementCoupon called with code="${code}", matched:`, !!result);
+  } catch (err) {
+    console.error(`[COUPON] incrementCoupon error:`, err.message);
+  }
 };
 
 // --- RAZORPAY INITIALIZATION ---
