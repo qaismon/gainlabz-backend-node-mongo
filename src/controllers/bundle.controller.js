@@ -1,8 +1,19 @@
 const Bundle = require("../models/Bundle.model");
+const cloudinary = require("../config/cloudinary");
+
+async function uploadToCloudinary(img) {
+  if (typeof img === "string" && img.startsWith("data:")) {
+    const result = await cloudinary.uploader.upload(img, { folder: "bundles" });
+    return result.secure_url;
+  }
+  return img;
+}
 
 exports.createBundle = async (req, res) => {
   try {
-    const bundle = await Bundle.create(req.body);
+    const data = { ...req.body };
+    data.image = await uploadToCloudinary(data.image);
+    const bundle = await Bundle.create(data);
     const populated = await bundle.populate("products.product");
     res.status(201).json({ success: true, bundle: populated });
   } catch (err) {
@@ -30,7 +41,9 @@ exports.getActiveBundles = async (req, res) => {
 
 exports.updateBundle = async (req, res) => {
   try {
-    const bundle = await Bundle.findByIdAndUpdate(req.params.id, req.body, { new: true }).populate("products.product");
+    const data = { ...req.body };
+    data.image = await uploadToCloudinary(data.image);
+    const bundle = await Bundle.findByIdAndUpdate(req.params.id, data, { new: true }).populate("products.product");
     res.json({ success: true, bundle });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

@@ -1,6 +1,7 @@
 const Order = require("../models/Order.model");
 const User = require("../models/User.model");
 const Product = require("../models/Product.model");
+const Coupon = require("../models/Coupon.model");
 const mongoose = require("mongoose");
 const Razorpay = require("razorpay");
 const crypto = require("crypto");
@@ -45,6 +46,16 @@ const updateInventory = async (items, multiplier) => {
     }));
 };
 
+const incrementCoupon = async (code) => {
+  if (!code) return;
+  try {
+    await Coupon.findOneAndUpdate(
+      { code: code.toUpperCase(), isActive: true },
+      { $inc: { usedCount: 1 } }
+    );
+  } catch {}
+};
+
 // --- RAZORPAY INITIALIZATION ---
 exports.placeOrderRazorpay = async (req, res) => {
     try {
@@ -64,7 +75,7 @@ exports.placeOrderRazorpay = async (req, res) => {
 // --- RAZORPAY VERIFICATION & DB SAVE ---
 exports.verifyRazorpay = async (req, res) => {
     try {
-        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, formData, items, amount } = req.body;
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, formData, items, amount, couponCode } = req.body;
         const userId = req.user.id || req.user._id;
 
         const sign = razorpay_order_id + "|" + razorpay_payment_id;
@@ -98,6 +109,7 @@ exports.verifyRazorpay = async (req, res) => {
         await updateInventory(formattedItems, -1);
 
         await User.findByIdAndUpdate(userId, { cartData: {} });
+        await incrementCoupon(couponCode);
         res.status(201).json({ success: true, message: "Order placed and stock updated." });
 
     } catch (error) {
@@ -108,7 +120,7 @@ exports.verifyRazorpay = async (req, res) => {
 // --- ORIGINAL PLACE ORDER (COD / UPI) ---
 exports.placeOrder = async (req, res) => {
     try {
-        const { items, amount, payment, upiId, deliveryData } = req.body;
+        const { items, amount, payment, upiId, deliveryData, couponCode } = req.body;
         const userId = req.user.id || req.user._id;
 
         // 1. Pre-check Stock
@@ -143,6 +155,7 @@ exports.placeOrder = async (req, res) => {
         await updateInventory(formattedItems, -1);
 
         await User.findByIdAndUpdate(userId, { cartData: {} });
+        await incrementCoupon(couponCode);
         res.status(201).json({ success: true, message: "Order placed successfully" });
 
     } catch (error) {

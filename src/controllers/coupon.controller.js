@@ -46,8 +46,6 @@ exports.validateCoupon = async (req, res) => {
 
     const discountAmount = (Number(amount) * coupon.discountPercent) / 100;
 
-    await Coupon.findByIdAndUpdate(coupon._id, { $inc: { usedCount: 1 } });
-
     res.json({ success: true, coupon, discountAmount, discountPercent: coupon.discountPercent });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
