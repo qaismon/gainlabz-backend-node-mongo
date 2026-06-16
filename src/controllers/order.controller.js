@@ -151,6 +151,38 @@ exports.placeOrder = async (req, res) => {
 };
 
 // --- CANCEL ORDER (WITH STOCK RESTORATION) ---
+// --- REORDER (ONE-CLICK) ---
+exports.reorder = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const userId = req.user.id || req.user._id;
+
+    const existingOrder = await Order.findById(orderId);
+    if (!existingOrder) return res.status(404).json({ success: false, message: "Order not found" });
+    if (existingOrder.user.toString() !== userId.toString()) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+    const newOrder = new Order({
+      user: existingOrder.user,
+      items: existingOrder.items.map(item => ({
+        product: item.product,
+        name: item.name,
+        flavor: item.flavor,
+        price: item.price,
+        quantity: item.quantity
+      })),
+      amount: existingOrder.amount,
+      payment: "COD",
+      deliveryData: existingOrder.deliveryData,
+      status: "Pending"
+    });
+
+    await newOrder.save();
+    res.status(201).json({ success: true, message: "Order re-placed successfully", order: newOrder });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 exports.cancelOrder = async (req, res) => {
     try {
         const { orderId } = req.body;

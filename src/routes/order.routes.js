@@ -7,8 +7,9 @@ const {
   getAllOrders,
   cancelOrder,
   updateOrderStatus,
-  placeOrderRazorpay, // Add this
-  verifyRazorpay,     // Add this
+  placeOrderRazorpay,
+  verifyRazorpay,
+  reorder,
 } = require("../controllers/order.controller");
 
 const auth = require("../middleware/auth.middleware");
@@ -26,6 +27,7 @@ router.post("/verify-razorpay", auth, verifyRazorpay);
 // Order History & Management
 router.get("/my-orders", auth, getUserOrders);
 router.post('/cancel', auth, cancelOrder);
+router.post('/reorder/:orderId', auth, reorder);
 
 // --- ADMIN ROUTES ---
 router.get("/all", auth, admin, getAllOrders);
