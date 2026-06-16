@@ -18,5 +18,6 @@ app.use("/api/auth", require("./routes/auth.routes"));
 app.use("/api/users", require("./routes/user.routes"));
 app.use("/api/reviews", require("./routes/review.routes"));
 app.use("/api/recommendations", require("./routes/recommendation.routes"));
+app.use("/api/wishlist", require("./routes/wishlist.routes"));
 
 module.exports = app;
