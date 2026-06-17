@@ -10,6 +10,94 @@ exports.getAllProducts = async (req, res) => {
     }
 };
 
+exports.searchProducts = async (req, res) => {
+  try {
+    const { q, page = 1, limit = 20 } = req.query;
+    if (!q || !q.trim()) {
+      return res.json({ success: true, results: [], totalCount: 0, page: 1, totalPages: 0 });
+    }
+    const query = q.trim();
+    const skip = (Number(page) - 1) * Number(limit);
+    const limitNum = Number(limit);
+
+    try {
+      const pipeline = [
+        {
+          $search: {
+            index: "default",
+            compound: {
+              should: [
+                { autocomplete: { query, path: "name", tokenOrder: "any", fuzzy: { maxEdits: 2 } } },
+                { autocomplete: { query, path: "description", tokenOrder: "any", fuzzy: { maxEdits: 1 } } }
+              ]
+            }
+          }
+        },
+        { $match: { stock: { $gt: 0 } } },
+        { $addFields: { score: { $meta: "searchScore" } } },
+        { $sort: { score: -1 } },
+        { $skip: skip },
+        { $limit: limitNum }
+      ];
+
+      const countPipeline = [
+        {
+          $search: {
+            index: "default",
+            compound: {
+              should: [
+                { autocomplete: { query, path: "name", tokenOrder: "any", fuzzy: { maxEdits: 2 } } },
+                { autocomplete: { query, path: "description", tokenOrder: "any", fuzzy: { maxEdits: 1 } } }
+              ]
+            }
+          }
+        },
+        { $match: { stock: { $gt: 0 } } },
+        { $count: "total" }
+      ];
+
+      const [results, countResult] = await Promise.all([
+        Product.aggregate(pipeline),
+        Product.aggregate(countPipeline)
+      ]);
+
+      const totalCount = countResult[0]?.total || 0;
+
+      return res.json({
+        success: true,
+        results,
+        totalCount,
+        page: Number(page),
+        totalPages: Math.ceil(totalCount / limitNum)
+      });
+    } catch (searchError) {
+      console.log("Atlas Search unavailable, falling back to regex");
+      const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      const filter = {
+        $or: [
+          { name: { $regex: regex } },
+          { description: { $regex: regex } },
+          { category: { $regex: regex } }
+        ],
+        stock: { $gt: 0 }
+      };
+      const [results, totalCount] = await Promise.all([
+        Product.find(filter).skip(skip).limit(limitNum),
+        Product.countDocuments(filter)
+      ]);
+      return res.json({
+        success: true,
+        results,
+        totalCount,
+        page: Number(page),
+        totalPages: Math.ceil(totalCount / limitNum)
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 exports.getProductById = async (req, res) => {
     try {
         const product = await Product.findById(req.params.id);
