@@ -1,5 +1,30 @@
 const Product = require("../models/Product.model");
 const cloudinary = require("../config/cloudinary");
+const Fuse = require("fuse.js");
+
+let fuseInstance = null;
+let fuseCacheTime = 0;
+const FUSE_TTL = 60000;
+
+async function getFuseIndex() {
+  if (fuseInstance && Date.now() - fuseCacheTime < FUSE_TTL) return fuseInstance;
+  const all = await Product.find({ stock: { $gt: 0 } }).lean();
+  fuseInstance = new Fuse(all, {
+    keys: [
+      { name: "name", weight: 0.7 },
+      { name: "description", weight: 0.3 }
+    ],
+    threshold: 0.4,
+    includeScore: true,
+    minMatchCharLength: 2
+  });
+  fuseCacheTime = Date.now();
+  return fuseInstance;
+}
+
+function hasExactMatch(results, query) {
+  return results.some((p) => (p.name || "").toLowerCase().includes(query.toLowerCase()));
+}
 
 exports.getAllProducts = async (req, res) => {
     try {
@@ -19,8 +44,9 @@ exports.searchProducts = async (req, res) => {
     const query = q.trim();
     const skip = (Number(page) - 1) * Number(limit);
     const limitNum = Number(limit);
+    let correctedQuery = null;
 
-    // Tier 1: Atlas Search ($search aggregation)
+    // Tier 1: Atlas Search
     try {
       const pipeline = [
         {
@@ -40,40 +66,28 @@ exports.searchProducts = async (req, res) => {
         { $skip: skip },
         { $limit: limitNum }
       ];
-
       const countPipeline = [
-        {
-          $search: {
-            index: "default",
-            compound: {
-              should: [
-                { autocomplete: { query, path: "name", tokenOrder: "any", fuzzy: { maxEdits: 2 } } },
-                { autocomplete: { query, path: "description", tokenOrder: "any", fuzzy: { maxEdits: 1 } } }
-              ]
-            }
-          }
-        },
+        { $search: { index: "default", compound: { should: [
+          { autocomplete: { query, path: "name", tokenOrder: "any", fuzzy: { maxEdits: 2 } } },
+          { autocomplete: { query, path: "description", tokenOrder: "any", fuzzy: { maxEdits: 1 } } }
+        ] } } },
         { $match: { stock: { $gt: 0 } } },
         { $count: "total" }
       ];
-
       const [results, countResult] = await Promise.all([
         Product.aggregate(pipeline),
         Product.aggregate(countPipeline)
       ]);
-
       const totalCount = countResult[0]?.total || 0;
-
+      if (!hasExactMatch(results, query)) correctedQuery = results[0]?.name || null;
       return res.json({
-        success: true,
-        results,
-        totalCount,
-        page: Number(page),
-        totalPages: Math.ceil(totalCount / limitNum)
+        success: true, results, totalCount,
+        page: Number(page), totalPages: Math.ceil(totalCount / limitNum),
+        correctedQuery: totalCount > 0 && correctedQuery ? correctedQuery : null
       });
     } catch (_) {}
 
-    // Tier 2: $text search (MongoDB text index)
+    // Tier 2: $text search
     try {
       const filter = { $text: { $search: query }, stock: { $gt: 0 } };
       const projection = { score: { $meta: "textScore" } };
@@ -81,24 +95,38 @@ exports.searchProducts = async (req, res) => {
         Product.find(filter, projection).sort({ score: { $meta: "textScore" } }).skip(skip).limit(limitNum),
         Product.countDocuments(filter)
       ]);
-      return res.json({
-        success: true,
-        results,
-        totalCount,
-        page: Number(page),
-        totalPages: Math.ceil(totalCount / limitNum)
-      });
+      if (results.length > 0) {
+        if (!hasExactMatch(results, query)) correctedQuery = results[0]?.name || null;
+        return res.json({
+          success: true, results, totalCount,
+          page: Number(page), totalPages: Math.ceil(totalCount / limitNum),
+          correctedQuery
+        });
+      }
     } catch (_) {}
 
-    // Tier 3: $regex fallback (substring match)
+    // Tier 3: Fuse.js fuzzy search
+    try {
+      const fuse = await getFuseIndex();
+      const fuseResults = fuse.search(query);
+      if (fuseResults.length > 0) {
+        const all = fuseResults.map((r) => r.item);
+        const totalCount = all.length;
+        const paged = all.slice(skip, skip + limitNum);
+        if (!hasExactMatch(paged, query)) correctedQuery = paged[0]?.name || null;
+        return res.json({
+          success: true, results: paged, totalCount,
+          page: Number(page), totalPages: Math.ceil(totalCount / limitNum),
+          correctedQuery
+        });
+      }
+    } catch (_) {}
+
+    // Tier 4: $regex fallback
     const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(escaped, "i");
     const filter = {
-      $or: [
-        { name: { $regex: regex } },
-        { description: { $regex: regex } },
-        { category: { $regex: regex } }
-      ],
+      $or: [{ name: { $regex: regex } }, { description: { $regex: regex } }, { category: { $regex: regex } }],
       stock: { $gt: 0 }
     };
     const [results, totalCount] = await Promise.all([
@@ -106,11 +134,9 @@ exports.searchProducts = async (req, res) => {
       Product.countDocuments(filter)
     ]);
     return res.json({
-      success: true,
-      results,
-      totalCount,
-      page: Number(page),
-      totalPages: Math.ceil(totalCount / limitNum)
+      success: true, results, totalCount,
+      page: Number(page), totalPages: Math.ceil(totalCount / limitNum),
+      correctedQuery: null
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -121,12 +147,23 @@ exports.suggestProducts = async (req, res) => {
   try {
     const { q } = req.query;
     if (!q || !q.trim()) return res.json({ success: true, suggestions: [] });
-    const escaped = q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const query = q.trim();
+
+    // Try $regex first (fastest)
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(escaped, "i");
-    const results = await Product.find({ name: { $regex: regex }, stock: { $gt: 0 } })
+    let results = await Product.find({ name: { $regex: regex }, stock: { $gt: 0 } })
       .select("name image price offerPrice onSale")
       .limit(5)
       .lean();
+
+    // Fall back to Fuse.js for fuzzy autocomplete
+    if (results.length === 0) {
+      const fuse = await getFuseIndex();
+      const fuseResults = fuse.search(query).slice(0, 5);
+      results = fuseResults.map((r) => r.item);
+    }
+
     res.json({ success: true, suggestions: results });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
