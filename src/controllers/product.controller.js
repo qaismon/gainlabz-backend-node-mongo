@@ -14,7 +14,7 @@ async function getFuseIndex() {
       { name: "name", weight: 0.7 },
       { name: "description", weight: 0.3 }
     ],
-    threshold: 0.4,
+    threshold: 0.5,
     includeScore: true,
     minMatchCharLength: 2
   });
@@ -22,8 +22,39 @@ async function getFuseIndex() {
   return fuseInstance;
 }
 
-function hasExactMatch(results, query) {
-  return results.some((p) => (p.name || "").toLowerCase().includes(query.toLowerCase()));
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(dp[j], dp[j - 1], prev);
+      prev = tmp;
+    }
+  }
+  return dp[n];
+}
+
+function getCorrectedTerm(query, results) {
+  const q = query.toLowerCase().trim();
+  const wordFreq = {};
+  results.forEach((p) => {
+    const words = [...new Set((p.name || "").toLowerCase().split(/\s+/))];
+    words.forEach((w) => { if (w.length >= 2) wordFreq[w] = (wordFreq[w] || 0) + 1; });
+  });
+  let best = null, bestDist = Infinity;
+  const maxDist = Math.max(2, Math.ceil(q.length / 2));
+  for (const [word, freq] of Object.entries(wordFreq)) {
+    if (word === q) continue;
+    const dist = levenshtein(q, word);
+    if (dist <= maxDist && freq >= Math.min(2, results.length) && dist < bestDist) {
+      bestDist = dist;
+      best = word;
+    }
+  }
+  return best ? best.charAt(0).toUpperCase() + best.slice(1) : null;
 }
 
 exports.getAllProducts = async (req, res) => {
@@ -44,7 +75,6 @@ exports.searchProducts = async (req, res) => {
     const query = q.trim();
     const skip = (Number(page) - 1) * Number(limit);
     const limitNum = Number(limit);
-    let correctedQuery = null;
 
     // Tier 1: Atlas Search
     try {
@@ -79,11 +109,10 @@ exports.searchProducts = async (req, res) => {
         Product.aggregate(countPipeline)
       ]);
       const totalCount = countResult[0]?.total || 0;
-      if (!hasExactMatch(results, query)) correctedQuery = results[0]?.name || null;
       return res.json({
         success: true, results, totalCount,
         page: Number(page), totalPages: Math.ceil(totalCount / limitNum),
-        correctedQuery: totalCount > 0 && correctedQuery ? correctedQuery : null
+        correctedQuery: totalCount > 0 ? getCorrectedTerm(query, results) : null
       });
     } catch (_) {}
 
@@ -96,11 +125,10 @@ exports.searchProducts = async (req, res) => {
         Product.countDocuments(filter)
       ]);
       if (results.length > 0) {
-        if (!hasExactMatch(results, query)) correctedQuery = results[0]?.name || null;
         return res.json({
           success: true, results, totalCount,
           page: Number(page), totalPages: Math.ceil(totalCount / limitNum),
-          correctedQuery
+          correctedQuery: getCorrectedTerm(query, results)
         });
       }
     } catch (_) {}
@@ -113,11 +141,10 @@ exports.searchProducts = async (req, res) => {
         const all = fuseResults.map((r) => r.item);
         const totalCount = all.length;
         const paged = all.slice(skip, skip + limitNum);
-        if (!hasExactMatch(paged, query)) correctedQuery = paged[0]?.name || null;
         return res.json({
           success: true, results: paged, totalCount,
           page: Number(page), totalPages: Math.ceil(totalCount / limitNum),
-          correctedQuery
+          correctedQuery: getCorrectedTerm(query, paged)
         });
       }
     } catch (_) {}
