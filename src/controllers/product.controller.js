@@ -20,6 +20,7 @@ exports.searchProducts = async (req, res) => {
     const skip = (Number(page) - 1) * Number(limit);
     const limitNum = Number(limit);
 
+    // Tier 1: Atlas Search ($search aggregation)
     try {
       const pipeline = [
         {
@@ -70,19 +71,14 @@ exports.searchProducts = async (req, res) => {
         page: Number(page),
         totalPages: Math.ceil(totalCount / limitNum)
       });
-    } catch (searchError) {
-      console.log("Atlas Search unavailable, falling back to regex");
-      const regex = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
-      const filter = {
-        $or: [
-          { name: { $regex: regex } },
-          { description: { $regex: regex } },
-          { category: { $regex: regex } }
-        ],
-        stock: { $gt: 0 }
-      };
+    } catch (_) {}
+
+    // Tier 2: $text search (MongoDB text index)
+    try {
+      const filter = { $text: { $search: query }, stock: { $gt: 0 } };
+      const projection = { score: { $meta: "textScore" } };
       const [results, totalCount] = await Promise.all([
-        Product.find(filter).skip(skip).limit(limitNum),
+        Product.find(filter, projection).sort({ score: { $meta: "textScore" } }).skip(skip).limit(limitNum),
         Product.countDocuments(filter)
       ]);
       return res.json({
@@ -92,7 +88,46 @@ exports.searchProducts = async (req, res) => {
         page: Number(page),
         totalPages: Math.ceil(totalCount / limitNum)
       });
-    }
+    } catch (_) {}
+
+    // Tier 3: $regex fallback (substring match)
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(escaped, "i");
+    const filter = {
+      $or: [
+        { name: { $regex: regex } },
+        { description: { $regex: regex } },
+        { category: { $regex: regex } }
+      ],
+      stock: { $gt: 0 }
+    };
+    const [results, totalCount] = await Promise.all([
+      Product.find(filter).skip(skip).limit(limitNum),
+      Product.countDocuments(filter)
+    ]);
+    return res.json({
+      success: true,
+      results,
+      totalCount,
+      page: Number(page),
+      totalPages: Math.ceil(totalCount / limitNum)
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.suggestProducts = async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || !q.trim()) return res.json({ success: true, suggestions: [] });
+    const escaped = q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(escaped, "i");
+    const results = await Product.find({ name: { $regex: regex }, stock: { $gt: 0 } })
+      .select("name image price offerPrice onSale")
+      .limit(5)
+      .lean();
+    res.json({ success: true, suggestions: results });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -30,6 +30,7 @@ const upload = multer({
 });
 
 // USER ROUTES
+router.get("/suggest", productController.suggestProducts);
 router.get("/search", productController.searchProducts);
 router.get("/", productController.getAllProducts);
 router.get("/:id", productController.getProductById);
