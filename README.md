@@ -18,6 +18,7 @@ This is not just CRUD — it manages:
 - **Product image upload to Cloudinary**
 - **Review system with Cloudinary image upload**
 - **Product recommendations** (user-based, item-based, popularity)
+- **Full-text search** (Atlas Search → text index → Fuse.js fuzzy → regex)
 - **Wishlist / Favorites**
 - **Coupon / Discount Codes**
 - **Bundle Deals**
@@ -119,6 +120,27 @@ POST /api/orders/status
 - **Reviews** — Images uploaded via `multer-storage-cloudinary` to folder `reviews`; existing `uploads/...` paths also supported
 - **Bundles** — Same Base64 → Cloudinary pattern as products, folder `bundles`
 - Allowed formats: jpeg, png, gif, webp, jfif
+
+🌟 Full-Text Search
+Four-tier search pipeline with automatic fallback:
+
+| Tier | Method | Handles Typos? | When Used |
+|------|--------|----------------|-----------|
+| 1 | MongoDB Atlas Search `$search` | ✅ Fuzzy (maxEdits:2) | Deployed with Atlas Search index |
+| 2 | MongoDB `$text` index | ❌ Stemming only | Any MongoDB with text index |
+| 3 | **Fuse.js** (in-memory) | ✅ **Yes** (threshold 0.5) | Falls through when higher tiers return 0 |
+| 4 | `$regex` substring match | ❌ | Last resort |
+
+- **Autocomplete suggestions** — `GET /api/products/suggest?q=...` returns 5 results with name + image (uses Fuse.js fuzzy fallback)
+- **"Did you mean?"** — Levenshtein distance analysis extracts the corrected term from product name tokens, shown when the query doesn't appear in any result name
+- Paginated results with relevance scoring
+
+```
+GET /api/products/search?q=...&page=1&limit=20   → Full search with pagination
+GET /api/products/suggest?q=...                   → Autocomplete (5 results)
+```
+
+**Resume highlight**: *"Built multi-tier full-text search with fuzzy typo tolerance using MongoDB Atlas Search, text indexes, and Fuse.js — handling corrections like 'whay' → 'whey' via Levenshtein distance"*
 
 🌟 Product Recommendations
 Three real-time aggregation strategies (no batch jobs):
